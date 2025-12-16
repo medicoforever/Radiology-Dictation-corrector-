@@ -1,4 +1,3 @@
-
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { GoogleGenAI, Modality, Session, LiveServerMessage } from '@google/genai';
 import { LIVE_GEMINI_PROMPT } from '../constants';
@@ -10,8 +9,7 @@ declare global {
   }
 }
 
-// Switched to gemini-2.0-flash-exp which reliably supports Text-only output in Live API
-const MODEL_NAME = 'gemini-2.0-flash-exp';
+const MODEL_NAME = 'gemini-2.5-flash-native-audio-preview-12-2025';
 const SAMPLE_RATE = 16000;
 const BUFFER_SIZE = 4096;
 
@@ -189,7 +187,13 @@ export const useLiveSession = () => {
             const sessionPromise = clientRef.current.live.connect({
                 model: MODEL_NAME,
                 config: {
-                    responseModalities: [Modality.TEXT],
+                    // Must use AUDIO modality for native audio models to avoid "Cannot extract voices" error
+                    responseModalities: [Modality.AUDIO],
+                    speechConfig: {
+                        voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
+                    },
+                    // Enable transcription to get the text content of what the model is "saying" (dictating)
+                    outputAudioTranscription: {}, 
                     systemInstruction: systemInstruction,
                 },
                 callbacks: {
@@ -213,17 +217,15 @@ export const useLiveSession = () => {
                          const timeSinceLastMessage = lastMessageTimeRef.current ? now - lastMessageTimeRef.current : 0;
                          lastMessageTimeRef.current = now;
                         
-                         const modelTurn = message.serverContent?.modelTurn;
-                         if (modelTurn?.parts) {
-                            const responseText = modelTurn.parts
-                                .map(part => part.text)
-                                .filter(Boolean)
-                                .join('');
+                         // For AUDIO modality, we get the text from outputTranscription
+                         const transcription = message.serverContent?.outputTranscription;
+                         if (transcription?.text) {
+                            const responseText = transcription.text;
                             
                             if (responseText) {
                                 let separator = '';
                                 // Heuristic: Add a space if there's a significant pause between chunks (e.g., user paused speaking).
-                                if (timeSinceLastMessage > 300 && bufferRef.current.length > 0 && !/\s$/.test(bufferRef.current) && !/^\s/.test(responseText)) {
+                                if (timeSinceLastMessage > 500 && bufferRef.current.length > 0 && !/\s$/.test(bufferRef.current) && !/^\s/.test(responseText)) {
                                     separator = ' ';
                                 }
                                 bufferRef.current += separator + responseText;
