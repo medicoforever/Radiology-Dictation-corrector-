@@ -49,7 +49,8 @@ const App: React.FC = () => {
   const [chat, setChat] = useState<Chat | null>(null);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [isChatting, setIsChatting] = useState<boolean>(false);
-  const [selectedModel, setSelectedModel] = useState<string>('gemini-2.5-pro');
+  // CHANGED: Default to Flash for better rate limits on free tier
+  const [selectedModel, setSelectedModel] = useState<string>('gemini-2.5-flash');
   const [customPrompt, setCustomPrompt] = useState<string>('');
   const [identifiedErrors, setIdentifiedErrors] = useState<IdentifiedError[]>([]);
   const [errorCheckStatus, setErrorCheckStatus] = useState<'idle' | 'checking' | 'complete'>('idle');
@@ -133,7 +134,7 @@ const App: React.FC = () => {
           setChatHistory(savedState.chatHistory || []);
           setStatus(AppStatus.Success);
           
-          setSelectedModel(savedState.selectedModel || 'gemini-2.5-pro');
+          setSelectedModel(savedState.selectedModel || 'gemini-2.5-flash');
           setCustomPrompt(savedState.customPrompt || '');
 
           // Recreate chat session asynchronously
@@ -332,7 +333,7 @@ const App: React.FC = () => {
       setChat(chatSession);
 
       const aiGreeting = "I have updated the transcript with your new dictation. How can I help you further?";
-      setChatHistory([{ author: 'AI', text: `${updatedFindings.join('\n\n')}\n\n${aiGreeting}` }]);
+      setChatHistory([{ author: 'AI' as const, text: `${updatedFindings.join('\n\n')}\n\n${aiGreeting}` }]);
 
     } catch (err) {
       console.error("Error during dictation continuation:", err);

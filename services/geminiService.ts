@@ -15,6 +15,37 @@ const getAIClient = () => {
   return new GoogleGenAI({ apiKey: getApiKey() });
 };
 
+// Utility function to delay execution
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Retry utility with exponential backoff and error classification
+async function retryOperation<T>(operation: () => Promise<T>, retries = 3, initialDelay = 1000): Promise<T> {
+    let lastError: any;
+    for (let i = 0; i < retries; i++) {
+        try {
+            return await operation();
+        } catch (error: any) {
+            lastError = error;
+            // Check for 429 (Resource Exhausted) or 503 (Service Unavailable)
+            const isRateLimit = error.message?.includes('429') || error.message?.includes('RESOURCE_EXHAUSTED') || error.status === 429;
+            const isServerOverload = error.message?.includes('503') || error.status === 503;
+
+            if (isRateLimit || isServerOverload) {
+                // If it's the last attempt, don't wait, just throw
+                if (i === retries - 1) break;
+                
+                const waitTime = initialDelay * Math.pow(2, i);
+                console.warn(`API Rate Limit/Error hit. Retrying in ${waitTime}ms... (Attempt ${i + 1}/${retries})`);
+                await delay(waitTime);
+                continue;
+            }
+            // Throw immediately for other errors (like 400 Bad Request)
+            throw error;
+        }
+    }
+    throw lastError;
+}
+
 export const blobToBase64 = (blob: Blob): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -75,8 +106,10 @@ const responseSchema = {
 
 const runImageAgenticAnalysis = async (imageBlobs: Blob[]): Promise<string[]> => {
     const ai = getAIClient();
-    // Step 1: Transcription Agent (Parallel Execution)
-    const transcriptionPromises = imageBlobs.map(async (imageBlob) => {
+    const transcriptions: string[] = [];
+
+    // SEQUENTIAL EXECUTION to respect rate limits
+    for (const imageBlob of imageBlobs) {
         const base64Image = await blobToBase64(imageBlob);
         const imagePart = {
             inlineData: {
@@ -85,28 +118,36 @@ const runImageAgenticAnalysis = async (imageBlobs: Blob[]): Promise<string[]> =>
             }
         };
         const textPart = { text: IMAGE_TRANSCRIPTION_AGENT_PROMPT };
-        
+
         try {
-            const response = await ai.models.generateContent({
+            // Attempt 1: Try Gemini 3 Pro (best quality)
+            const result = await retryOperation(() => ai.models.generateContent({
                 model: 'gemini-3-pro-preview',
                 contents: { parts: [textPart, imagePart] }
-            });
-            return response.text;
+            }));
+            if (result.text) transcriptions.push(result.text);
         } catch (error: any) {
-            // Check for quota exceeded error (429)
-            if (error.message && (error.message.includes('429') || error.message.includes('RESOURCE_EXHAUSTED'))) {
-                console.warn("Gemini 3 Pro preview quota exceeded during transcription. Falling back to Gemini 2.5 Pro.");
-                const response = await ai.models.generateContent({
+            console.warn("Gemini 3 Pro failed, trying fallbacks...", error.message);
+            try {
+                // Attempt 2: Try Gemini 2.5 Pro
+                const result = await retryOperation(() => ai.models.generateContent({
                     model: 'gemini-2.5-pro',
                     contents: { parts: [textPart, imagePart] }
-                });
-                return response.text;
+                }));
+                if (result.text) transcriptions.push(result.text);
+            } catch (err2) {
+                // Attempt 3: Try Gemini 2.5 Flash (most reliable for quota)
+                console.warn("Gemini 2.5 Pro failed, falling back to Flash...", err2);
+                const result = await retryOperation(() => ai.models.generateContent({
+                    model: 'gemini-2.5-flash',
+                    contents: { parts: [textPart, imagePart] }
+                }));
+                if (result.text) transcriptions.push(result.text);
             }
-            throw error;
         }
-    });
-
-    const transcriptions = await Promise.all(transcriptionPromises);
+        // Small delay between images
+        await delay(500); 
+    }
     
     // Filter out any empty or failed transcriptions
     const validTranscriptions = transcriptions.filter(t => t && t.trim().length > 0);
@@ -124,29 +165,35 @@ const runImageAgenticAnalysis = async (imageBlobs: Blob[]): Promise<string[]> =>
     );
 
     let synthesizerResponse;
+    // Try synthesis with fallbacks
     try {
-        synthesizerResponse = await ai.models.generateContent({
+        synthesizerResponse = await retryOperation(() => ai.models.generateContent({
             model: 'gemini-3-pro-preview',
             contents: { parts: [{ text: synthesizerPrompt }] },
             config: {
                 responseMimeType: "application/json",
                 responseSchema: responseSchema
             }
-        });
+        }));
     } catch (error: any) {
-        // Check for quota exceeded error (429)
-        if (error.message && (error.message.includes('429') || error.message.includes('RESOURCE_EXHAUSTED'))) {
-            console.warn("Gemini 3 Pro preview quota exceeded during synthesis. Falling back to Gemini 2.5 Pro.");
-            synthesizerResponse = await ai.models.generateContent({
+        try {
+             synthesizerResponse = await retryOperation(() => ai.models.generateContent({
                 model: 'gemini-2.5-pro',
                 contents: { parts: [{ text: synthesizerPrompt }] },
                 config: {
                     responseMimeType: "application/json",
                     responseSchema: responseSchema
                 }
-            });
-        } else {
-            throw error;
+            }));
+        } catch (err2) {
+             synthesizerResponse = await retryOperation(() => ai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: { parts: [{ text: synthesizerPrompt }] },
+                config: {
+                    responseMimeType: "application/json",
+                    responseSchema: responseSchema
+                }
+            }));
         }
     }
 
@@ -223,14 +270,14 @@ export const processMedia = async (audioBlob: Blob | null, imageBlobs: Blob[] | 
   });
 
   try {
-    const response: GenerateContentResponse = await ai.models.generateContent({
+    const response: GenerateContentResponse = await retryOperation(() => ai.models.generateContent({
       model: targetModel,
       contents: { parts: parts },
       config: {
           responseMimeType: "application/json",
           responseSchema: responseSchema
       }
-    });
+    }));
 
     const jsonString = response.text;
     if (!jsonString) {
@@ -295,10 +342,10 @@ Follow these strict instructions to produce a clean and accurate continuation:
   };
 
   try {
-    const response: GenerateContentResponse = await ai.models.generateContent({
+    const response: GenerateContentResponse = await retryOperation(() => ai.models.generateContent({
       model: 'gemini-flash-lite-latest',
       contents: { parts: [textPart, audioPart] },
-    });
+    }));
 
     const resultText = response.text?.trim();
     if (!resultText) {
@@ -351,10 +398,10 @@ Now, listen to the audio and provide the single, updated finding text.`;
   };
 
   try {
-    const response: GenerateContentResponse = await ai.models.generateContent({
+    const response: GenerateContentResponse = await retryOperation(() => ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: { parts: [textPart, audioPart] },
-    });
+    }));
 
     const resultText = response.text?.trim();
     if (!resultText) {
@@ -462,14 +509,14 @@ ${JSON.stringify({ findings: currentFindings })}
   };
   
   try {
-    const response: GenerateContentResponse = await ai.models.generateContent({
+    const response: GenerateContentResponse = await retryOperation(() => ai.models.generateContent({
       model: model,
       contents: { parts: [textPart, audioPart] },
       config: {
           responseMimeType: "application/json",
           responseSchema: responseSchema
       }
-    });
+    }));
 
     const jsonString = response.text;
     if (!jsonString) {
@@ -508,10 +555,10 @@ export const transcribeAudioForPrompt = async (audioBlob: Blob): Promise<string>
   };
   
   try {
-    const response: GenerateContentResponse = await ai.models.generateContent({
+    const response: GenerateContentResponse = await retryOperation(() => ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: { parts: [textPart, audioPart] },
-    });
+    }));
 
     const resultText = response.text?.trim();
     if (!resultText) {
@@ -621,14 +668,14 @@ export const identifyPotentialErrors = async (findings: string[], model: string)
     };
 
     try {
-        const response: GenerateContentResponse = await ai.models.generateContent({
+        const response: GenerateContentResponse = await retryOperation(() => ai.models.generateContent({
             model: model, // use the same model as the main transcription for consistency
             contents: { parts: [textPart] },
             config: {
                 responseMimeType: "application/json",
                 responseSchema: errorSchema
             }
-        });
+        }));
 
         const jsonString = response.text;
         if (!jsonString) {
@@ -665,14 +712,14 @@ export async function runAgenticAnalysis(content: string): Promise<{ finalResult
         // Step 1: Parallel Initial Analysis
         agenticSteps += "--- STEP 1: Initial Analysis (Fact-Checker Agents) ---\n\n";
         const initialPromises = Array.from({ length: 3 }, () => 
-            ai.models.generateContent({
+            retryOperation(() => ai.models.generateContent({
                 model: 'gemini-2.5-pro',
                 contents: `${INITIAL_AGENT_PROMPT}\n\n--- CONTENT TO ANALYZE ---\n\n${content}`,
                 config: { tools: [{ googleSearch: {} }] }
-            })
+            }))
         );
         const initialResponses = await Promise.all(initialPromises);
-        initialAnalyses = initialResponses.map(res => res.text);
+        initialAnalyses = initialResponses.map(res => res.text as string);
         initialAnalyses.forEach((text, i) => {
             agenticSteps += `**Agent 1.${i + 1} Output:**\n\`\`\`\n${text}\n\`\`\`\n\n`;
         });
@@ -680,14 +727,14 @@ export async function runAgenticAnalysis(content: string): Promise<{ finalResult
         // Step 2: Parallel Refinement
         agenticSteps += "--- STEP 2: Refinement (Peer Reviewer Agents) ---\n\n";
         const refinementPromises = initialAnalyses.map(analysis => 
-            ai.models.generateContent({
+            retryOperation(() => ai.models.generateContent({
                 model: 'gemini-2.5-pro',
                 contents: `${REFINEMENT_AGENT_PROMPT}\n\n--- ORIGINAL CONTENT ---\n\n${content}\n\n--- INITIAL ANALYSIS TO REFINE ---\n\n${analysis}`,
                 config: { tools: [{ googleSearch: {} }] }
-            })
+            }))
         );
         const refinedResponses = await Promise.all(refinementPromises);
-        refinedAnalyses = refinedResponses.map(res => res.text);
+        refinedAnalyses = refinedResponses.map(res => res.text as string);
         refinedAnalyses.forEach((text, i) => {
             agenticSteps += `**Agent 2.${i + 1} Output:**\n\`\`\`\n${text}\n\`\`\`\n\n`;
         });
@@ -710,12 +757,12 @@ export async function runAgenticAnalysis(content: string): Promise<{ finalResult
             // Step 1: Sequential Initial Analysis
             agenticSteps += "--- STEP 1: Initial Analysis (Fact-Checker Agents) [SEQUENTIAL] ---\n\n";
             for (let i = 0; i < 3; i++) {
-                const response = await ai.models.generateContent({
+                const response = await retryOperation(() => ai.models.generateContent({
                     model: 'gemini-2.5-pro',
                     contents: `${INITIAL_AGENT_PROMPT}\n\n--- CONTENT TO ANALYZE ---\n\n${content}`,
                     config: { tools: [{ googleSearch: {} }] }
-                });
-                initialAnalyses.push(response.text);
+                }));
+                initialAnalyses.push(response.text as string);
                 agenticSteps += `**Agent 1.${i + 1} Output:**\n\`\`\`\n${response.text}\n\`\`\`\n\n`;
                 await new Promise(resolve => setTimeout(resolve, DELAY_MS));
             }
@@ -724,12 +771,12 @@ export async function runAgenticAnalysis(content: string): Promise<{ finalResult
             agenticSteps += "--- STEP 2: Refinement (Peer Reviewer Agents) [SEQUENTIAL] ---\n\n";
             for (let i = 0; i < initialAnalyses.length; i++) {
                 const analysis = initialAnalyses[i];
-                const response = await ai.models.generateContent({
+                const response = await retryOperation(() => ai.models.generateContent({
                     model: 'gemini-2.5-pro',
                     contents: `${REFINEMENT_AGENT_PROMPT}\n\n--- ORIGINAL CONTENT ---\n\n${content}\n\n--- INITIAL ANALYSIS TO REFINE ---\n\n${analysis}`,
                     config: { tools: [{ googleSearch: {} }] }
-                });
-                refinedAnalyses.push(response.text);
+                }));
+                refinedAnalyses.push(response.text as string);
                 agenticSteps += `**Agent 2.${i + 1} Output:**\n\`\`\`\n${response.text}\n\`\`\`\n\n`;
                 await new Promise(resolve => setTimeout(resolve, DELAY_MS));
             }
@@ -750,14 +797,14 @@ export async function runAgenticAnalysis(content: string): Promise<{ finalResult
     try {
         // Step 3: Final Synthesis
         agenticSteps += "--- STEP 3: Final Synthesis (Master Editor Agent) ---\n\n";
-        const synthesizerResponse = await ai.models.generateContent({
+        const synthesizerResponse = await retryOperation(() => ai.models.generateContent({
             model: 'gemini-2.5-pro',
             contents: `${SYNTHESIZER_AGENT_PROMPT}\n\n--- ORIGINAL CONTENT ---\n\n${content}\n\n--- REFINED ANALYSES ---\n\n${refinedAnalyses.join('\n\n---\n\n')}`,
             config: {
                 tools: [{ googleSearch: {} }]
             }
-        });
-        const enhancementText = synthesizerResponse.text;
+        }));
+        const enhancementText = synthesizerResponse.text as string;
         agenticSteps += `**Agent 3.1 (Synthesizer) Output:**\n\`\`\`\n${enhancementText}\n\`\`\`\n\n`;
 
         // Output Formatting
@@ -826,14 +873,14 @@ ${expertNotesContent}
 
 Now, generate the complete report including the new impression in the specified JSON format.`;
 
-    const response = await ai.models.generateContent({
+    const response = await retryOperation(() => ai.models.generateContent({
         model: 'gemini-2.5-pro',
         contents: impressionPrompt,
         config: {
             responseMimeType: "application/json",
             responseSchema: responseSchema,
         }
-    });
+    }));
 
     const jsonString = response.text;
     if (!jsonString) {
