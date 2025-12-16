@@ -588,6 +588,7 @@ const App: React.FC = () => {
                         >
                             <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
                             <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                            <option value="gemini-robotics-er-1.5-preview">Gemini Robotics ER 1.5 Preview</option>
                         </select>
                     </div>
                 )}

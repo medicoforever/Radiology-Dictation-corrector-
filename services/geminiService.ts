@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Type, GenerateContentResponse, Chat } from "@google/genai";
 import { DEFAULT_GEMINI_PROMPT, TEMPLATE_GEMINI_PROMPT, REPORT_TEMPLATES, ERROR_IDENTIFIER_PROMPT, INITIAL_AGENT_PROMPT, REFINEMENT_AGENT_PROMPT, SYNTHESIZER_AGENT_PROMPT, IMAGE_ONLY_GEMINI_PROMPT, IMAGE_TRANSCRIPTION_AGENT_PROMPT } from '../constants';
 import { IdentifiedError } from "../types";
@@ -104,7 +103,7 @@ const responseSchema = {
     }
 };
 
-const runImageAgenticAnalysis = async (imageBlobs: Blob[]): Promise<string[]> => {
+const runImageAgenticAnalysis = async (imageBlobs: Blob[], model: string): Promise<string[]> => {
     const ai = getAIClient();
     const transcriptions: string[] = [];
 
@@ -120,30 +119,15 @@ const runImageAgenticAnalysis = async (imageBlobs: Blob[]): Promise<string[]> =>
         const textPart = { text: IMAGE_TRANSCRIPTION_AGENT_PROMPT };
 
         try {
-            // Attempt 1: Try Gemini 3 Pro (best quality)
+            // Use the selected model exclusively
             const result = await retryOperation(() => ai.models.generateContent({
-                model: 'gemini-3-pro-preview',
+                model: model,
                 contents: { parts: [textPart, imagePart] }
             }));
             if (result.text) transcriptions.push(result.text);
         } catch (error: any) {
-            console.warn("Gemini 3 Pro failed, trying fallbacks...", error.message);
-            try {
-                // Attempt 2: Try Gemini 2.5 Pro
-                const result = await retryOperation(() => ai.models.generateContent({
-                    model: 'gemini-2.5-pro',
-                    contents: { parts: [textPart, imagePart] }
-                }));
-                if (result.text) transcriptions.push(result.text);
-            } catch (err2) {
-                // Attempt 3: Try Gemini 2.5 Flash (most reliable for quota)
-                console.warn("Gemini 2.5 Pro failed, falling back to Flash...", err2);
-                const result = await retryOperation(() => ai.models.generateContent({
-                    model: 'gemini-2.5-flash',
-                    contents: { parts: [textPart, imagePart] }
-                }));
-                if (result.text) transcriptions.push(result.text);
-            }
+            console.error(`Model ${model} failed for image transcription:`, error);
+            // Continue to next image even if one fails
         }
         // Small delay between images
         await delay(500); 
@@ -165,10 +149,10 @@ const runImageAgenticAnalysis = async (imageBlobs: Blob[]): Promise<string[]> =>
     );
 
     let synthesizerResponse;
-    // Try synthesis with fallbacks
+    // Try synthesis with selected model
     try {
         synthesizerResponse = await retryOperation(() => ai.models.generateContent({
-            model: 'gemini-3-pro-preview',
+            model: model,
             contents: { parts: [{ text: synthesizerPrompt }] },
             config: {
                 responseMimeType: "application/json",
@@ -176,25 +160,8 @@ const runImageAgenticAnalysis = async (imageBlobs: Blob[]): Promise<string[]> =>
             }
         }));
     } catch (error: any) {
-        try {
-             synthesizerResponse = await retryOperation(() => ai.models.generateContent({
-                model: 'gemini-2.5-pro',
-                contents: { parts: [{ text: synthesizerPrompt }] },
-                config: {
-                    responseMimeType: "application/json",
-                    responseSchema: responseSchema
-                }
-            }));
-        } catch (err2) {
-             synthesizerResponse = await retryOperation(() => ai.models.generateContent({
-                model: 'gemini-2.5-flash',
-                contents: { parts: [{ text: synthesizerPrompt }] },
-                config: {
-                    responseMimeType: "application/json",
-                    responseSchema: responseSchema
-                }
-            }));
-        }
+        // Just throw if synthesizer fails, as we need the result
+        throw error;
     }
 
     const jsonString = synthesizerResponse.text;
@@ -219,7 +186,7 @@ export const processMedia = async (audioBlob: Blob | null, imageBlobs: Blob[] | 
   if (hasImages) {
     // NEW AGENTIC WORKFLOW FOR IMAGES. Ignores audio blob and custom prompts.
     try {
-      return await runImageAgenticAnalysis(imageBlobs);
+      return await runImageAgenticAnalysis(imageBlobs, model);
     } catch (error) {
       console.error("Error in image agentic analysis:", error);
       if (error instanceof Error) {
@@ -534,365 +501,247 @@ ${JSON.stringify({ findings: currentFindings })}
   } catch (error) {
     console.error("Error calling Gemini API for report modification:", error);
     if (error instanceof Error) {
-        throw new Error(`Failed to modify report: ${error.message}`);
+        throw new Error(`Failed to process report modification: ${error.message}`);
     }
     throw new Error("An unknown error occurred while communicating with the API for report modification.");
   }
 };
 
-export const transcribeAudioForPrompt = async (audioBlob: Blob): Promise<string> => {
-  const ai = getAIClient();
-  const base64Audio = await blobToBase64(audioBlob);
-
-  const prompt = "Transcribe the following audio accurately. Provide only the transcribed text without any additional commentary or introduction.";
-
-  const textPart = { text: prompt };
-  const audioPart = {
-    inlineData: {
-      mimeType: getCleanMimeType(audioBlob),
-      data: base64Audio,
-    },
-  };
-  
-  try {
-    const response: GenerateContentResponse = await retryOperation(() => ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: { parts: [textPart, audioPart] },
-    }));
-
-    const resultText = response.text?.trim();
-    if (!resultText) {
-      return ""; // Return empty string if no transcription
-    }
-    return resultText;
-  } catch (error) {
-    console.error("Error calling Gemini API for transcription:", error);
-    if (error instanceof Error) {
-        throw new Error(`Failed to transcribe audio: ${error.message}`);
-    }
-    throw new Error("An unknown error occurred while communicating with the API for transcription.");
-  }
-};
-
-
-export const createChat = async (audioBlob: Blob, initialFindings: string[], customPrompt?: string): Promise<Chat> => {
-  const ai = getAIClient();
-  const base64Audio = await blobToBase64(audioBlob);
-  
-  const userMessageParts = [
-    {
-      inlineData: {
-        mimeType: getCleanMimeType(audioBlob),
-        data: base64Audio,
-      },
-    },
-    {
-      text: `This is the audio I dictated.`,
-    }
-  ];
-
-  const modelResponsePart = { text: `This is the transcript you requested:\n\n${initialFindings.join('\n\n')}` };
-
-  let systemInstruction = 'You are a helpful AI assistant for a radiologist. The user has provided an audio dictation and you have transcribed it. Now, answer the user\'s follow-up questions based on the content of the audio and the transcript.';
-  if (customPrompt) {
-      systemInstruction += `\n\nAdditionally, follow these custom instructions from the user:\n${customPrompt}`;
-  }
-
-  const chat = ai.chats.create({
-    model: 'gemini-2.5-flash',
-    config: {
-      systemInstruction: systemInstruction,
-    },
-    history: [
-      { role: 'user', parts: userMessageParts },
-      { role: 'model', parts: [modelResponsePart] },
-    ],
-  });
-  return chat;
-};
-
-export const createChatFromText = async (initialFindings: string[], customPrompt?: string): Promise<Chat> => {
-  const ai = getAIClient();
-  const userMessagePart = { text: `This is the transcript I generated.` };
-  const modelResponsePart = { text: `This is the transcript you requested:\n\n${initialFindings.join('\n\n')}` };
-  
-  let systemInstruction = 'You are a helpful AI assistant for a radiologist. The user has provided a transcript from a live dictation. Now, answer the user\'s follow-up questions based on the content of the transcript.';
-  if (customPrompt) {
-      systemInstruction += `\n\nAdditionally, follow these custom instructions from the user:\n${customPrompt}`;
-  }
-
-  const chat = ai.chats.create({
-    model: 'gemini-2.5-flash',
-    config: {
-      systemInstruction: systemInstruction,
-    },
-    history: [
-      { role: 'user', parts: [userMessagePart] },
-      { role: 'model', parts: [modelResponsePart] },
-    ],
-  });
-  return chat;
-};
-
-const errorSchema = {
-    type: Type.OBJECT,
-    properties: {
-        errors: {
-            type: Type.ARRAY,
-            items: {
-                type: Type.OBJECT,
-                properties: {
-                    findingIndex: {
-                        type: Type.INTEGER,
-                        description: "The 0-based index of the finding with a potential error."
-                    },
-                    errorDescription: {
-                        type: Type.STRING,
-                        description: "A concise explanation of the potential error."
-                    },
-                    severity: {
-                        type: Type.STRING,
-                        description: "The severity of the issue: 'WARNING' or 'INFO'."
+export const createChat = async (audioBlob: Blob, findings: string[], customPrompt?: string): Promise<Chat> => {
+    const ai = getAIClient();
+    const base64Audio = await blobToBase64(audioBlob);
+    
+    // Initialize chat with the context of the current session
+    const history = [
+        {
+            role: "user",
+            parts: [
+                { text: `Here is the audio recording of the dictation.` },
+                {
+                    inlineData: {
+                        mimeType: getCleanMimeType(audioBlob),
+                        data: base64Audio
                     }
                 },
-                required: ["findingIndex", "errorDescription", "severity"]
-            }
+                { text: `And here are the corrected findings you generated from it:\n${JSON.stringify(findings, null, 2)}\n\nI might ask you follow-up questions about this report or the audio.` }
+            ]
+        },
+        {
+            role: "model",
+            parts: [{ text: "Understood. I have the audio and the findings. I am ready to answer your questions." }]
         }
-    }
+    ];
+
+    const chat = ai.chats.create({
+        model: 'gemini-2.5-flash',
+        history: history,
+        config: {
+            systemInstruction: customPrompt || DEFAULT_GEMINI_PROMPT
+        }
+    });
+
+    return chat;
 };
+
+export const createChatFromText = async (findings: string[], customPrompt?: string): Promise<Chat> => {
+     const ai = getAIClient();
+     
+     const history = [
+         {
+             role: "user",
+             parts: [
+                 { text: `Here are the radiology findings:\n${JSON.stringify(findings, null, 2)}\n\nI might ask you follow-up questions about this report.` }
+             ]
+         },
+         {
+             role: "model",
+             parts: [{ text: "Understood. I have the findings. I am ready to answer your questions." }]
+         }
+     ];
+ 
+     const chat = ai.chats.create({
+         model: 'gemini-2.5-flash',
+         history: history,
+         config: {
+             systemInstruction: customPrompt || DEFAULT_GEMINI_PROMPT
+         }
+     });
+ 
+     return chat;
+ };
 
 export const identifyPotentialErrors = async (findings: string[], model: string): Promise<IdentifiedError[]> => {
     const ai = getAIClient();
-    const textPart = {
-        text: `${ERROR_IDENTIFIER_PROMPT}\n\nReport to analyze:\n${JSON.stringify({ findings })}`,
-    };
+    const findingsText = JSON.stringify({ findings });
+    
+    const prompt = ERROR_IDENTIFIER_PROMPT + "\n\nInput Report:\n" + findingsText;
 
     try {
         const response: GenerateContentResponse = await retryOperation(() => ai.models.generateContent({
-            model: model, // use the same model as the main transcription for consistency
-            contents: { parts: [textPart] },
+            model: model,
+            contents: { parts: [{ text: prompt }] },
             config: {
                 responseMimeType: "application/json",
-                responseSchema: errorSchema
+                // responseSchema could be defined but let's stick to prompt instruction for now as the prompt is quite specific about output format
             }
         }));
 
         const jsonString = response.text;
-        if (!jsonString) {
-            return [];
-        }
-
+        if (!jsonString) return [];
+        
         const cleanedJsonString = jsonString.replace(/^```json\s*|```\s*$/g, '').trim();
         const result = JSON.parse(cleanedJsonString);
-
+        
         if (result && Array.isArray(result.errors)) {
-            return result.errors as IdentifiedError[];
-        } else {
-            console.warn("Invalid data structure in error identification response.");
-            return [];
+            return result.errors;
         }
+        return [];
     } catch (error) {
-        console.error("Error calling Gemini API for error identification:", error);
-        // Don't throw, just return empty array as this is a background task.
+        console.error("Error identifying potential errors:", error);
         return [];
     }
 };
 
-export async function runAgenticAnalysis(content: string): Promise<{ finalResult: string; agenticSteps: string; enhancementText: string; }> {
+export const transcribeAudioForPrompt = async (audioBlob: Blob): Promise<string> => {
     const ai = getAIClient();
-    let agenticSteps = "### Agentic Workflow Log\n\n";
-    let initialAnalyses: string[] = [];
-    let refinedAnalyses: string[] = [];
-    const DELAY_MS = 250; // Delay for sequential fallback
+    const base64Audio = await blobToBase64(audioBlob);
+    
+    const prompt = "Transcribe the following audio exactly as spoken. Do not add any commentary. Do not format it as a medical report, just plain text.";
 
     try {
-        // --- PRIMARY PATH: PARALLEL EXECUTION ---
-        agenticSteps += "--- ATTEMPTING PARALLEL EXECUTION ---\n\n";
-        
-        // Step 1: Parallel Initial Analysis
-        agenticSteps += "--- STEP 1: Initial Analysis (Fact-Checker Agents) ---\n\n";
-        const initialPromises = Array.from({ length: 3 }, () => 
-            retryOperation(() => ai.models.generateContent({
-                model: 'gemini-2.5-pro',
-                contents: `${INITIAL_AGENT_PROMPT}\n\n--- CONTENT TO ANALYZE ---\n\n${content}`,
-                config: { tools: [{ googleSearch: {} }] }
-            }))
-        );
-        const initialResponses = await Promise.all(initialPromises);
-        initialAnalyses = initialResponses.map(res => res.text as string);
-        initialAnalyses.forEach((text, i) => {
-            agenticSteps += `**Agent 1.${i + 1} Output:**\n\`\`\`\n${text}\n\`\`\`\n\n`;
-        });
-
-        // Step 2: Parallel Refinement
-        agenticSteps += "--- STEP 2: Refinement (Peer Reviewer Agents) ---\n\n";
-        const refinementPromises = initialAnalyses.map(analysis => 
-            retryOperation(() => ai.models.generateContent({
-                model: 'gemini-2.5-pro',
-                contents: `${REFINEMENT_AGENT_PROMPT}\n\n--- ORIGINAL CONTENT ---\n\n${content}\n\n--- INITIAL ANALYSIS TO REFINE ---\n\n${analysis}`,
-                config: { tools: [{ googleSearch: {} }] }
-            }))
-        );
-        const refinedResponses = await Promise.all(refinementPromises);
-        refinedAnalyses = refinedResponses.map(res => res.text as string);
-        refinedAnalyses.forEach((text, i) => {
-            agenticSteps += `**Agent 2.${i + 1} Output:**\n\`\`\`\n${text}\n\`\`\`\n\n`;
-        });
-
-    } catch (err) {
-        // --- FALLBACK PATH: SEQUENTIAL EXECUTION ---
-        const isRateLimitError = err instanceof Error && (err.message.includes('429') || /rate limit/i.test(err.message));
-        
-        if (isRateLimitError) {
-            agenticSteps += "\n---!! PARALLEL EXECUTION FAILED DUE TO RATE LIMITING !! ---\n";
-            agenticSteps += `---!! SWITCHING TO SEQUENTIAL EXECUTION WITH FLASH !! ---\n\n`;
-            
-            // Wait a moment before retrying
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            // Clear previous results before retry
-            initialAnalyses = [];
-            refinedAnalyses = [];
-
-            // Step 1: Sequential Initial Analysis with FLASH
-            agenticSteps += "--- STEP 1: Initial Analysis (Fact-Checker Agents) [SEQUENTIAL FLASH] ---\n\n";
-            for (let i = 0; i < 3; i++) {
-                const response = await retryOperation(() => ai.models.generateContent({
-                    model: 'gemini-2.5-flash',
-                    contents: `${INITIAL_AGENT_PROMPT}\n\n--- CONTENT TO ANALYZE ---\n\n${content}`,
-                    config: { tools: [{ googleSearch: {} }] }
-                }));
-                initialAnalyses.push(response.text as string);
-                agenticSteps += `**Agent 1.${i + 1} Output:**\n\`\`\`\n${response.text}\n\`\`\`\n\n`;
-                await new Promise(resolve => setTimeout(resolve, DELAY_MS));
-            }
-
-            // Step 2: Sequential Refinement with FLASH
-            agenticSteps += "--- STEP 2: Refinement (Peer Reviewer Agents) [SEQUENTIAL FLASH] ---\n\n";
-            for (let i = 0; i < initialAnalyses.length; i++) {
-                const analysis = initialAnalyses[i];
-                const response = await retryOperation(() => ai.models.generateContent({
-                    model: 'gemini-2.5-flash',
-                    contents: `${REFINEMENT_AGENT_PROMPT}\n\n--- ORIGINAL CONTENT ---\n\n${content}\n\n--- INITIAL ANALYSIS TO REFINE ---\n\n${analysis}`,
-                    config: { tools: [{ googleSearch: {} }] }
-                }));
-                refinedAnalyses.push(response.text as string);
-                agenticSteps += `**Agent 2.${i + 1} Output:**\n\`\`\`\n${response.text}\n\`\`\`\n\n`;
-                await new Promise(resolve => setTimeout(resolve, DELAY_MS));
-            }
-        } else {
-            // It's not a rate limit error, so fail the workflow
-            console.error("Agentic analysis failed:", err);
-            const errorMessage = err instanceof Error ? err.message : "An unknown error occurred during agentic analysis.";
-            agenticSteps += `\n---!! WORKFLOW FAILED !! ---\n${errorMessage}`;
-            return {
-                finalResult: `${content}\n\n**Error:** The agentic analysis failed. Please try again.`,
-                agenticSteps,
-                enhancementText: `**Error:** The agentic analysis failed. ${errorMessage}`
-            };
-        }
-    }
-
-    // This part runs after either parallel success or sequential fallback success
-    try {
-        // Step 3: Final Synthesis
-        agenticSteps += "--- STEP 3: Final Synthesis (Master Editor Agent) ---\n\n";
-        const synthesizerResponse = await retryOperation(() => ai.models.generateContent({
-            model: 'gemini-2.5-flash', // Use Flash for final synthesis to be safe on quota
-            contents: `${SYNTHESIZER_AGENT_PROMPT}\n\n--- ORIGINAL CONTENT ---\n\n${content}\n\n--- REFINED ANALYSES ---\n\n${refinedAnalyses.join('\n\n---\n\n')}`,
-            config: {
-                tools: [{ googleSearch: {} }]
+        const response: GenerateContentResponse = await retryOperation(() => ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: {
+                parts: [
+                    { text: prompt },
+                    {
+                        inlineData: {
+                            mimeType: getCleanMimeType(audioBlob),
+                            data: base64Audio
+                        }
+                    }
+                ]
             }
         }));
-        const enhancementText = synthesizerResponse.text as string;
-        agenticSteps += `**Agent 3.1 (Synthesizer) Output:**\n\`\`\`\n${enhancementText}\n\`\`\`\n\n`;
 
-        // Output Formatting
-        let finalResult = '';
-        if (enhancementText.toLowerCase().includes("no significant errors or omissions found")) {
-            finalResult = content;
-        } else {
-            let sourcesText = '';
-            const groundingChunks = synthesizerResponse.candidates?.[0]?.groundingMetadata?.groundingChunks;
-            if (groundingChunks && groundingChunks.length > 0) {
-                const urls = new Set<string>();
-                groundingChunks.forEach(chunk => {
-                    if (chunk.web?.uri) {
-                        urls.add(chunk.web.uri);
-                    }
-                });
-                if (urls.size > 0) {
-                    sourcesText = `\n\n## Sources\n${Array.from(urls).map(url => `- ${url}`).join('\n')}`;
-                }
-            }
-            finalResult = `${content}\n\n${enhancementText}${sourcesText}`;
-        }
-
-        return { finalResult, agenticSteps, enhancementText };
-    } catch (err) {
-        // This catch handles errors during the synthesis step or if the sequential fallback also fails
-        console.error("Agentic analysis failed (post-parallel/sequential):", err);
-        const errorMessage = err instanceof Error ? err.message : "An unknown error occurred during the final synthesis step.";
-        agenticSteps += `\n---!! WORKFLOW FAILED !! ---\n${errorMessage}`;
-        return {
-            finalResult: `${content}\n\n**Error:** The agentic analysis failed. Please try again.`,
-            agenticSteps,
-            enhancementText: `**Error:** The agentic analysis failed. ${errorMessage}`
-        };
+        return response.text?.trim() || "";
+    } catch (error) {
+        console.error("Error transcribing audio for prompt:", error);
+        throw error;
     }
-}
+};
 
-export async function runComplexImpressionGeneration(currentFindings: string[], additionalFindings: string): Promise<{ findings: string[]; expertNotes: string; }> {
+export const runComplexImpressionGeneration = async (findings: string[], complexInput: string): Promise<{ findings: string[], expertNotes: string }> => {
     const ai = getAIClient();
-    const content = currentFindings.join('\n\n') + (additionalFindings ? `\n\n${additionalFindings}` : '');
+    const findingsText = findings.join('\n');
+    const inputContent = `Original Report Findings:\n${findingsText}\n\nAdditional User Notes/Patient History:\n${complexInput}`;
 
-    const { finalResult: expertNotesContent, enhancementText } = await runAgenticAnalysis(content);
+    // Agent 1: Initial Analysis
+    let initialAnalysis = "";
+    try {
+        const response1 = await retryOperation(() => ai.models.generateContent({
+            model: 'gemini-3-pro-preview',
+            contents: {
+                parts: [
+                    { text: INITIAL_AGENT_PROMPT },
+                    { text: `Here is the case content:\n${inputContent}` }
+                ]
+            },
+            config: {
+                tools: [{ googleSearch: {} }] // Use Search Grounding
+            }
+        }));
+        initialAnalysis = response1.text || "";
+    } catch (e) {
+        console.error("Agent 1 failed", e);
+        throw new Error("Initial analysis failed.");
+    }
 
-    const findingsWithoutImpression = currentFindings.filter(f => !f.toUpperCase().startsWith('IMPRESSION:'));
+    // Agent 2: Refinement
+    let refinedAnalysis = "";
+    try {
+        const response2 = await retryOperation(() => ai.models.generateContent({
+            model: 'gemini-3-pro-preview',
+            contents: {
+                parts: [
+                    { text: REFINEMENT_AGENT_PROMPT },
+                    { text: `Original Content:\n${inputContent}\n\nInitial Analysis:\n${initialAnalysis}` }
+                ]
+            },
+            config: {
+                 tools: [{ googleSearch: {} }]
+            }
+        }));
+        refinedAnalysis = response2.text || "";
+    } catch (e) {
+        console.error("Agent 2 failed", e);
+        refinedAnalysis = initialAnalysis; // Fallback
+    }
 
-    const impressionPrompt = `You are an expert radiologist AI. You are given a set of findings from a dictation and some expert notes from an analysis agent. Your task is to generate a concise, clinically relevant impression based on ALL available information.
+    // Agent 3: Synthesis (Expert Notes)
+    let expertNotes = "";
+    try {
+        const response3 = await retryOperation(() => ai.models.generateContent({
+            model: 'gemini-3-pro-preview',
+            contents: {
+                parts: [
+                    { text: SYNTHESIZER_AGENT_PROMPT },
+                    { text: `Original Content:\n${inputContent}\n\nRefined Analysis:\n${refinedAnalysis}` }
+                ]
+            },
+             config: {
+                 tools: [{ googleSearch: {} }]
+            }
+        }));
+        expertNotes = response3.text || "";
+    } catch (e) {
+         console.error("Agent 3 failed", e);
+         expertNotes = refinedAnalysis;
+    }
 
-**STRICT INSTRUCTIONS:**
-1.  **DO NOT MODIFY THE ORIGINAL FINDINGS.** Preserve them exactly as they are provided below.
-2.  Use the "Expert Notes" as a knowledge base to deeply understand the context, potential inaccuracies, and missing information. Use this deeper understanding to create a highly accurate and comprehensive impression based on the original findings.
-3.  Synthesize a new impression based on the findings. If an impression already exists in the original findings, you MUST REPLACE it with your new one.
-4.  Formulate the impression based on these strict criteria:
-    - The impression must be concise and formulated without using verbs. For instance, instead of "There are patches of contusion", write "Patches of contusion".
-    - Combine multiple related findings, including all their key descriptors into single, coherent impression points to ensure the summary is both concise and complete.
-    - List unrelated findings as separate points. For example, hepatomegaly and splenomegaly should be separate points if not related to a primary diagnosis.
-    - The impression must NOT contain any numerical values or measurements.
-    -  If clinically relevant, you may add concluding phrases like "likely infective etiology" or "likely inflammatory etiology" or "likely neoplastic etiology” or “likely reactive” or “suggested clinical correlation/ review as indicated” or similar phrases. Avoid vague, non-committal conclusions when a more specific diagnosis is possible.
-5.  The entire impression MUST be formatted as a single string in the "findings" array. It must start with "IMPRESSION:" (all caps), followed by '###', then each point separated by '###'.
-6.  Your final output must be a JSON object with a single key "findings", containing the complete, updated list of findings (original findings + your new impression) as an array of strings.
+    // Final Step: Generate updated Impression for the report
+    let updatedFindings = [...findings];
+    try {
+        const impressionPrompt = `
+        You are an expert radiologist.
+        
+        Context:
+        1. Existing Report Findings: ${JSON.stringify(findings)}
+        2. Additional Patient History/Notes: ${complexInput}
+        3. Expert Analysis & Research: ${expertNotes}
 
-**ORIGINAL FINDINGS (DO NOT CHANGE):**
-${JSON.stringify(findingsWithoutImpression)}
+        Task:
+        Based on ALL the above information, generate a comprehensive and clinically accurate IMPRESSION section.
+        - Combine related findings.
+        - Incorporate the expert analysis where clinically appropriate for the diagnosis.
+        - Format the impression as a single string starting with "IMPRESSION:###".
+        - Separate points with "###".
+        - Do not include the findings list, ONLY the IMPRESSION string.
+        `;
 
-**EXPERT NOTES (USE FOR CONTEXT):**
-${expertNotesContent}
+        const response4 = await retryOperation(() => ai.models.generateContent({
+             model: 'gemini-2.5-flash',
+             contents: { parts: [{ text: impressionPrompt }] }
+        }));
+        
+        const newImpression = response4.text?.trim();
+        if (newImpression && newImpression.includes("IMPRESSION:")) {
+            // Remove old impression if exists (naive check or matching standard format)
+             updatedFindings = updatedFindings.filter(f => {
+                const clean = f.replace(/^BOLD::/, '');
+                return !clean.includes("IMPRESSION:");
+             });
 
-Now, generate the complete report including the new impression in the specified JSON format.`;
-
-    const response = await retryOperation(() => ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: impressionPrompt,
-        config: {
-            responseMimeType: "application/json",
-            responseSchema: responseSchema,
+            updatedFindings.push(newImpression);
         }
-    }));
 
-    const jsonString = response.text;
-    if (!jsonString) {
-        throw new Error("Complex impression generation returned an empty response.");
+    } catch (e) {
+        console.error("Final impression generation failed", e);
+        // If fails, we just return original findings with the notes
     }
 
-    const cleanedJsonString = jsonString.replace(/^```json\s*|```\s*$/g, '').trim();
-    const result = JSON.parse(cleanedJsonString);
-
-    if (result && Array.isArray(result.findings)) {
-        return { findings: result.findings, expertNotes: enhancementText };
-    } else {
-        throw new Error("Invalid data structure in complex impression response.");
-    }
-}
+    return {
+        findings: updatedFindings,
+        expertNotes: expertNotes
+    };
+};
