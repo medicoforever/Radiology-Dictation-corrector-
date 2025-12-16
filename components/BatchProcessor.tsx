@@ -935,7 +935,7 @@ const BatchProcessor: React.FC<BatchProcessorProps> = ({ onBack, selectedModel, 
           plainText = cleanFinding;
           htmlText = `<p style="text-align:center;"><strong><u>${cleanFinding}</u></strong></p>`;
         } else if (isImpression) {
-            plainText = `${title.toUpperCase()}\n${points.map(p => `• ${p}`).join('\n')}`);
+            plainText = `${title.toUpperCase()}\n${points.map(p => `• ${p}`).join('\n')}`;
             htmlText = `<p><strong style="text-decoration: underline;">${title.toUpperCase()}</strong></p><ul>${points.map(p => `<li><strong>${p}</strong></li>`).join('')}</ul>`;
         } else if (isStructured) {
             plainText = [title, ...points].join('\n');
