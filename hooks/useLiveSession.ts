@@ -10,7 +10,7 @@ declare global {
   }
 }
 
-const MODEL_NAME = 'gemini-2.5-flash-live-preview';
+const MODEL_NAME = 'gemini-2.5-flash-native-audio-preview-12-2025';
 const SAMPLE_RATE = 16000;
 const BUFFER_SIZE = 4096;
 

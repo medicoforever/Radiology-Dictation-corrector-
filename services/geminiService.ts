@@ -599,7 +599,7 @@ export const createChat = async (audioBlob: Blob, initialFindings: string[], cus
   }
 
   const chat = ai.chats.create({
-    model: 'gemini-2.5-pro',
+    model: 'gemini-2.5-flash',
     config: {
       systemInstruction: systemInstruction,
     },
@@ -622,7 +622,7 @@ export const createChatFromText = async (initialFindings: string[], customPrompt
   }
 
   const chat = ai.chats.create({
-    model: 'gemini-2.5-pro',
+    model: 'gemini-2.5-flash',
     config: {
       systemInstruction: systemInstruction,
     },
@@ -745,7 +745,7 @@ export async function runAgenticAnalysis(content: string): Promise<{ finalResult
         
         if (isRateLimitError) {
             agenticSteps += "\n---!! PARALLEL EXECUTION FAILED DUE TO RATE LIMITING !! ---\n";
-            agenticSteps += `---!! SWITCHING TO SEQUENTIAL EXECUTION WITH DELAYS !! ---\n\n`;
+            agenticSteps += `---!! SWITCHING TO SEQUENTIAL EXECUTION WITH FLASH !! ---\n\n`;
             
             // Wait a moment before retrying
             await new Promise(resolve => setTimeout(resolve, 1000));
@@ -754,11 +754,11 @@ export async function runAgenticAnalysis(content: string): Promise<{ finalResult
             initialAnalyses = [];
             refinedAnalyses = [];
 
-            // Step 1: Sequential Initial Analysis
-            agenticSteps += "--- STEP 1: Initial Analysis (Fact-Checker Agents) [SEQUENTIAL] ---\n\n";
+            // Step 1: Sequential Initial Analysis with FLASH
+            agenticSteps += "--- STEP 1: Initial Analysis (Fact-Checker Agents) [SEQUENTIAL FLASH] ---\n\n";
             for (let i = 0; i < 3; i++) {
                 const response = await retryOperation(() => ai.models.generateContent({
-                    model: 'gemini-2.5-pro',
+                    model: 'gemini-2.5-flash',
                     contents: `${INITIAL_AGENT_PROMPT}\n\n--- CONTENT TO ANALYZE ---\n\n${content}`,
                     config: { tools: [{ googleSearch: {} }] }
                 }));
@@ -767,12 +767,12 @@ export async function runAgenticAnalysis(content: string): Promise<{ finalResult
                 await new Promise(resolve => setTimeout(resolve, DELAY_MS));
             }
 
-            // Step 2: Sequential Refinement
-            agenticSteps += "--- STEP 2: Refinement (Peer Reviewer Agents) [SEQUENTIAL] ---\n\n";
+            // Step 2: Sequential Refinement with FLASH
+            agenticSteps += "--- STEP 2: Refinement (Peer Reviewer Agents) [SEQUENTIAL FLASH] ---\n\n";
             for (let i = 0; i < initialAnalyses.length; i++) {
                 const analysis = initialAnalyses[i];
                 const response = await retryOperation(() => ai.models.generateContent({
-                    model: 'gemini-2.5-pro',
+                    model: 'gemini-2.5-flash',
                     contents: `${REFINEMENT_AGENT_PROMPT}\n\n--- ORIGINAL CONTENT ---\n\n${content}\n\n--- INITIAL ANALYSIS TO REFINE ---\n\n${analysis}`,
                     config: { tools: [{ googleSearch: {} }] }
                 }));
@@ -798,7 +798,7 @@ export async function runAgenticAnalysis(content: string): Promise<{ finalResult
         // Step 3: Final Synthesis
         agenticSteps += "--- STEP 3: Final Synthesis (Master Editor Agent) ---\n\n";
         const synthesizerResponse = await retryOperation(() => ai.models.generateContent({
-            model: 'gemini-2.5-pro',
+            model: 'gemini-2.5-flash', // Use Flash for final synthesis to be safe on quota
             contents: `${SYNTHESIZER_AGENT_PROMPT}\n\n--- ORIGINAL CONTENT ---\n\n${content}\n\n--- REFINED ANALYSES ---\n\n${refinedAnalyses.join('\n\n---\n\n')}`,
             config: {
                 tools: [{ googleSearch: {} }]
@@ -874,7 +874,7 @@ ${expertNotesContent}
 Now, generate the complete report including the new impression in the specified JSON format.`;
 
     const response = await retryOperation(() => ai.models.generateContent({
-        model: 'gemini-2.5-pro',
+        model: 'gemini-2.5-flash',
         contents: impressionPrompt,
         config: {
             responseMimeType: "application/json",
