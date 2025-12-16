@@ -1,0 +1,8 @@
+{
+  "name": "Copy of Radiology Dictation Corrector 21.0",
+  "description": "An AI-powered tool for radiologists to record audio dictations and receive corrected, clean text transcripts. The app corrects speech-to-text errors, removes non-verbal sounds, and formats the output for easy copying.  NEW - IMPRESSION CREATION ALTERATION",
+  "requestFramePermissions": [
+    "microphone",
+    "camera"
+  ]
+}
