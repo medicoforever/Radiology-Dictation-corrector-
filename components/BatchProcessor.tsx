@@ -101,7 +101,6 @@ const getCleanMimeType = (blob: Blob): string => {
     return mimeType.split(';')[0];
 };
 
-// FIX: Changed to named export to match App.tsx import
 export const BatchProcessor: React.FC<BatchProcessorProps> = ({ onBack, selectedModel, isErrorCheckEnabled }) => {
     const [batches, setBatches] = useState<Batch[]>([]);
     const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
@@ -466,7 +465,8 @@ export const BatchProcessor: React.FC<BatchProcessorProps> = ({ onBack, selected
             findings: null,
             status: 'idle',
             isChatting: false,
-            selectedModel: selectedModel,
+            // Default model to gemini-3-flash-preview as requested
+            selectedModel: 'gemini-3-flash-preview',
             customPrompt: globalCustomPrompt,
         };
         setBatches(prev => [...prev, newBatch]);
@@ -974,7 +974,6 @@ export const BatchProcessor: React.FC<BatchProcessorProps> = ({ onBack, selected
         const allTextPlain = batch.findings.map(f => {
             const isBold = f.startsWith('BOLD::');
             const cleanFinding = isBold ? f.substring(6) : f;
-            const isTitle = cleanFinding.trim() === 'C.T.SCAN OF BRAIN (PLAIN)';
             const { isStructured, title, points } = parseStructuredFinding(cleanFinding);
             const isImpression = isStructured && title.trim().toUpperCase() === 'IMPRESSION:';
             if (isImpression) {
@@ -1040,7 +1039,7 @@ export const BatchProcessor: React.FC<BatchProcessorProps> = ({ onBack, selected
             }).join('\n');
             const htmlFindings = b.findings!.map(f => {
                 const isBold = f.startsWith('BOLD::');
-                const cleanFinding = isBold ? f.substring(6) : f;
+                const cleanFinding = f.substring(6);
                 const isTitle = cleanFinding.trim() === 'C.T.SCAN OF BRAIN (PLAIN)';
                 const { isStructured, title, points } = parseStructuredFinding(cleanFinding);
                 const isImpression = isStructured && title.trim().toUpperCase() === 'IMPRESSION:';
@@ -1615,7 +1614,7 @@ export const BatchProcessor: React.FC<BatchProcessorProps> = ({ onBack, selected
             )}
             <button onClick={onBack} className="text-sm text-blue-600 hover:underline dark:text-blue-400 dark:hover:text-blue-300 mb-4 inline-block">&larr; Back to Single Dictation</button>
             <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept="audio/*" aria-hidden="true" />
-            <input type="file" ref={imageInputRef} onChange={handleImageSelect} className="hidden" accept="image/* multiple aria-hidden="true" />
+            <input type="file" ref={imageInputRef} onChange={handleImageSelect} className="hidden" accept="image/*" multiple aria-hidden="true" />
             
             <div className="my-4 p-4 border rounded-lg bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
                 <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-2">Global Instructions</h3>
@@ -1816,10 +1815,10 @@ export const BatchProcessor: React.FC<BatchProcessorProps> = ({ onBack, selected
                                                             className="bg-white border border-slate-300 text-slate-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2 w-full dark:bg-slate-700 dark:border-slate-600 dark:text-white"
                                                             aria-label="Select AI model for reprocessing"
                                                         >
+                                                            <option value="gemini-3-flash-preview">Gemini 3 Flash (Default)</option>
                                                             <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
                                                             <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
                                                             <option value="gemini-robotics-er-1.5-preview">Gemini Robotics ER 1.5 Preview</option>
-                                                            <option value="gemini-3-flash-preview">Gemini 3 Flash</option>
                                                         </select>
                                                     </div>
                                                     <button
@@ -2024,7 +2023,7 @@ export const BatchProcessor: React.FC<BatchProcessorProps> = ({ onBack, selected
                                                                                     <span className="font-bold underline uppercase">{title}</span>
                                                                                     <ul className="list-disc list-inside pl-4 mt-1">
                                                                                         {points.map((point, i) => (
-                                                                                            <li key={i} className="font-bold">{point}</li>
+                                                                                            <li key={i} className="font-bold">${point}</li>
                                                                                         ))}
                                                                                     </ul>
                                                                                 </>

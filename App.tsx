@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback, useEffect } from 'react';
 import AudioRecorder from './components/AudioRecorder';
 import ResultsDisplay from './components/ResultsDisplay';
@@ -48,8 +49,8 @@ const App: React.FC = () => {
   const [chat, setChat] = useState<Chat | null>(null);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [isChatting, setIsChatting] = useState<boolean>(false);
-  // CHANGED: Default to Flash for better rate limits on free tier
-  const [selectedModel, setSelectedModel] = useState<string>('gemini-2.5-flash');
+  // CHANGED: Default model to gemini-3-flash-preview as requested
+  const [selectedModel, setSelectedModel] = useState<string>('gemini-3-flash-preview');
   const [customPrompt, setCustomPrompt] = useState<string>('');
   const [identifiedErrors, setIdentifiedErrors] = useState<IdentifiedError[]>([]);
   const [errorCheckStatus, setErrorCheckStatus] = useState<'idle' | 'checking' | 'complete'>('idle');
@@ -133,7 +134,7 @@ const App: React.FC = () => {
           setChatHistory(savedState.chatHistory || []);
           setStatus(AppStatus.Success);
           
-          setSelectedModel(savedState.selectedModel || 'gemini-2.5-flash');
+          setSelectedModel(savedState.selectedModel || 'gemini-3-flash-preview');
           setCustomPrompt(savedState.customPrompt || '');
 
           // Recreate chat session asynchronously
@@ -585,10 +586,10 @@ const App: React.FC = () => {
                             onChange={(e) => setSelectedModel(e.target.value)}
                             className="bg-white border border-slate-300 text-slate-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2 dark:bg-slate-700 dark:border-slate-600 dark:placeholder-slate-400 dark:text-white"
                         >
+                            <option value="gemini-3-flash-preview">Gemini 3 Flash (Default)</option>
                             <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
                             <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
                             <option value="gemini-robotics-er-1.5-preview">Gemini Robotics ER 1.5 Preview</option>
-                            <option value="gemini-3-flash-preview">Gemini 3 Flash</option>
                         </select>
                     </div>
                 )}
