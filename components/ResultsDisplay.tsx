@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import ChatInterface from './ChatInterface';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
@@ -373,7 +372,8 @@ const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
       }
     }
 
-    const newSelectedIndices = new Set(selectedIndices);
+    // FIX: Added explicit number generic to new Set
+    const newSelectedIndices = new Set<number>(selectedIndices);
     if (newSelectedIndices.has(index)) {
       newSelectedIndices.delete(index);
       // Remove snippet if deselecting
@@ -792,6 +792,7 @@ const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
         const source = header + htmlContent + footer;
     
         const fileBlob = new Blob([source], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+        // FIX: Fixed variable name from blob to fileBlob
         const url = URL.createObjectURL(fileBlob);
         const a = document.createElement('a');
         a.href = url;
@@ -969,6 +970,7 @@ const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
                 <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
                 <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
                 <option value="gemini-robotics-er-1.5-preview">Gemini Robotics ER 1.5 Preview</option>
+                <option value="gemini-3-flash-preview">Gemini 3 Flash</option>
             </select>
           </div>
           <button

@@ -120,7 +120,8 @@ const runImageAgenticAnalysis = async (imageBlobs: Blob[], model: string): Promi
 
         try {
             // Use the selected model exclusively
-            const result = await retryOperation(() => ai.models.generateContent({
+            // FIX: Added GenerateContentResponse type parameter to retryOperation
+            const result = await retryOperation<GenerateContentResponse>(() => ai.models.generateContent({
                 model: model,
                 contents: { parts: [textPart, imagePart] }
             }));
@@ -151,7 +152,8 @@ const runImageAgenticAnalysis = async (imageBlobs: Blob[], model: string): Promi
     let synthesizerResponse;
     // Try synthesis with selected model
     try {
-        synthesizerResponse = await retryOperation(() => ai.models.generateContent({
+        // FIX: Added GenerateContentResponse type parameter to retryOperation
+        synthesizerResponse = await retryOperation<GenerateContentResponse>(() => ai.models.generateContent({
             model: model,
             contents: { parts: [{ text: synthesizerPrompt }] },
             config: {
@@ -639,7 +641,8 @@ export const runComplexImpressionGeneration = async (findings: string[], complex
     // Agent 1: Initial Analysis
     let initialAnalysis = "";
     try {
-        const response1 = await retryOperation(() => ai.models.generateContent({
+        // FIX: Added GenerateContentResponse type parameter to retryOperation
+        const response1 = await retryOperation<GenerateContentResponse>(() => ai.models.generateContent({
             model: 'gemini-3-pro-preview',
             contents: {
                 parts: [
@@ -660,7 +663,8 @@ export const runComplexImpressionGeneration = async (findings: string[], complex
     // Agent 2: Refinement
     let refinedAnalysis = "";
     try {
-        const response2 = await retryOperation(() => ai.models.generateContent({
+        // FIX: Added GenerateContentResponse type parameter to retryOperation
+        const response2 = await retryOperation<GenerateContentResponse>(() => ai.models.generateContent({
             model: 'gemini-3-pro-preview',
             contents: {
                 parts: [
@@ -681,7 +685,8 @@ export const runComplexImpressionGeneration = async (findings: string[], complex
     // Agent 3: Synthesis (Expert Notes)
     let expertNotes = "";
     try {
-        const response3 = await retryOperation(() => ai.models.generateContent({
+        // FIX: Added GenerateContentResponse type parameter to retryOperation
+        const response3 = await retryOperation<GenerateContentResponse>(() => ai.models.generateContent({
             model: 'gemini-3-pro-preview',
             contents: {
                 parts: [
@@ -719,7 +724,8 @@ export const runComplexImpressionGeneration = async (findings: string[], complex
         - Do not include the findings list, ONLY the IMPRESSION string.
         `;
 
-        const response4 = await retryOperation(() => ai.models.generateContent({
+        // FIX: Added GenerateContentResponse type parameter to retryOperation
+        const response4 = await retryOperation<GenerateContentResponse>(() => ai.models.generateContent({
              model: 'gemini-2.5-flash',
              contents: { parts: [{ text: impressionPrompt }] }
         }));

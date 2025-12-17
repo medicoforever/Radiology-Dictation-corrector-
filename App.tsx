@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useEffect } from 'react';
 import AudioRecorder from './components/AudioRecorder';
 import ResultsDisplay from './components/ResultsDisplay';
@@ -589,6 +588,7 @@ const App: React.FC = () => {
                             <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
                             <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
                             <option value="gemini-robotics-er-1.5-preview">Gemini Robotics ER 1.5 Preview</option>
+                            <option value="gemini-3-flash-preview">Gemini 3 Flash</option>
                         </select>
                     </div>
                 )}

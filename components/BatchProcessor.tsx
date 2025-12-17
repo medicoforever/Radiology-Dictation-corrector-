@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import { processMedia, createChat, blobToBase64, continueAudioDictation, base64ToBlob, modifyFindingWithAudio, modifyReportWithAudio, identifyPotentialErrors, runComplexImpressionGeneration, transcribeAudioForPrompt, createChatFromText } from '../services/geminiService';
@@ -102,7 +101,8 @@ const getCleanMimeType = (blob: Blob): string => {
     return mimeType.split(';')[0];
 };
 
-const BatchProcessor: React.FC<BatchProcessorProps> = ({ onBack, selectedModel, isErrorCheckEnabled }) => {
+// FIX: Changed to named export to match App.tsx import
+export const BatchProcessor: React.FC<BatchProcessorProps> = ({ onBack, selectedModel, isErrorCheckEnabled }) => {
     const [batches, setBatches] = useState<Batch[]>([]);
     const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
     const { isRecording: isMainRecording, isPaused: isMainPaused, stopRecording: stopMainRecording, startRecording: startMainRecording, pauseRecording: pauseMainRecording, resumeRecording: resumeMainRecording, error: mainRecorderError } = useAudioRecorder();
@@ -974,6 +974,7 @@ const BatchProcessor: React.FC<BatchProcessorProps> = ({ onBack, selectedModel, 
         const allTextPlain = batch.findings.map(f => {
             const isBold = f.startsWith('BOLD::');
             const cleanFinding = isBold ? f.substring(6) : f;
+            const isTitle = cleanFinding.trim() === 'C.T.SCAN OF BRAIN (PLAIN)';
             const { isStructured, title, points } = parseStructuredFinding(cleanFinding);
             const isImpression = isStructured && title.trim().toUpperCase() === 'IMPRESSION:';
             if (isImpression) {
@@ -1614,7 +1615,7 @@ const BatchProcessor: React.FC<BatchProcessorProps> = ({ onBack, selectedModel, 
             )}
             <button onClick={onBack} className="text-sm text-blue-600 hover:underline dark:text-blue-400 dark:hover:text-blue-300 mb-4 inline-block">&larr; Back to Single Dictation</button>
             <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept="audio/*" aria-hidden="true" />
-            <input type="file" ref={imageInputRef} onChange={handleImageSelect} className="hidden" accept="image/*" multiple aria-hidden="true" />
+            <input type="file" ref={imageInputRef} onChange={handleImageSelect} className="hidden" accept="image/* multiple aria-hidden="true" />
             
             <div className="my-4 p-4 border rounded-lg bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
                 <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-2">Global Instructions</h3>
@@ -1818,6 +1819,7 @@ const BatchProcessor: React.FC<BatchProcessorProps> = ({ onBack, selectedModel, 
                                                             <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
                                                             <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
                                                             <option value="gemini-robotics-er-1.5-preview">Gemini Robotics ER 1.5 Preview</option>
+                                                            <option value="gemini-3-flash-preview">Gemini 3 Flash</option>
                                                         </select>
                                                     </div>
                                                     <button
@@ -2118,7 +2120,7 @@ const BatchProcessor: React.FC<BatchProcessorProps> = ({ onBack, selectedModel, 
                                                     {modificationError.batchId === batch.id && modificationError.message && <p className="text-red-500 dark:text-red-400 text-sm mt-2">{modificationError.message}</p>}
                                                 </div>
                                                 
-                                                {/* Complex Impression Generator Section */}
+                                                {/* Complex Impression Generator Section per batch */}
                                                 {complexGeneratorVisibleForBatchId === batch.id ? (
                                                     <div className="mt-6 p-4 border-2 border-dashed rounded-lg bg-slate-50 dark:bg-slate-700/50 dark:border-slate-600">
                                                         {agenticStates[batch.id] === 'processing' ? (
@@ -2174,11 +2176,11 @@ const BatchProcessor: React.FC<BatchProcessorProps> = ({ onBack, selectedModel, 
                                                     </div>
                                                 ) : null}
 
-                                                {batch.chat && (
+                                                {batch.chatHistory && batch.chatHistory.length > 0 && (
                                                     <ChatInterface
-                                                        history={batch.chatHistory || []}
-                                                        isChatting={!!batch.isChatting}
-                                                        onSendMessage={(message) => handleSendMessage(batch.id, message)}
+                                                        history={batch.chatHistory}
+                                                        isChatting={batch.isChatting || false}
+                                                        onSendMessage={(msg) => handleSendMessage(batch.id, msg)}
                                                     />
                                                 )}
 
@@ -2187,8 +2189,7 @@ const BatchProcessor: React.FC<BatchProcessorProps> = ({ onBack, selectedModel, 
                                                         <>
                                                             <button
                                                                 onClick={() => handleStartContinue(batch.id)}
-                                                                disabled={!batch.findings}
-                                                                className="bg-green-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 transition-colors w-full sm:w-auto disabled:bg-green-300 disabled:cursor-not-allowed"
+                                                                className="bg-green-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 transition-colors w-full sm:w-auto"
                                                             >
                                                                 Continue Dictation
                                                             </button>
@@ -2210,8 +2211,7 @@ const BatchProcessor: React.FC<BatchProcessorProps> = ({ onBack, selectedModel, 
                                                             )}
                                                             <button
                                                                 onClick={() => handleDownload(batch)}
-                                                                disabled={!batch.audioBlobs.length}
-                                                                className="bg-slate-500 text-white font-bold py-2 px-6 rounded-lg hover:bg-slate-600 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-opacity-50 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed w-full sm:w-auto"
+                                                                className="bg-slate-500 text-white font-bold py-2 px-6 rounded-lg hover:bg-slate-600 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-opacity-50 transition-colors w-full sm:w-auto"
                                                             >
                                                                 Download Audio
                                                             </button>
@@ -2226,7 +2226,7 @@ const BatchProcessor: React.FC<BatchProcessorProps> = ({ onBack, selectedModel, 
                                                             <button
                                                                 onClick={handleStopContinue}
                                                                 className="flex items-center justify-center gap-2 bg-red-600 text-white font-bold py-1 px-4 rounded-lg hover:bg-red-700"
-                                                                aria-label="Stop continuing dictation for this batch"
+                                                                aria-label="Stop continuing dictation"
                                                             >
                                                                 <StopIcon className="w-5 h-5"/>
                                                                 Stop
@@ -2240,19 +2240,30 @@ const BatchProcessor: React.FC<BatchProcessorProps> = ({ onBack, selectedModel, 
                                                         </div>
                                                     )}
                                                 </div>
-                                                {continuationState.error && continuationState.batchId === batch.id && (
+                                                {continuationState.batchId === batch.id && continuationState.error && (
                                                     <p className="text-center text-red-500 dark:text-red-400 mt-4" role="alert">{continuationState.error}</p>
                                                 )}
                                             </>
-                                        ) : (
-                                            <div className="text-center p-4">
-                                                <p className="font-semibold text-red-600 dark:text-red-400">An error occurred during processing:</p>
-                                                <p className="text-sm text-red-500 dark:text-red-400 mt-1">{batch.error}</p>
-                                                <button onClick={() => handleReprocessBatch(batch.id)} className="mt-4 bg-red-100 text-red-800 font-bold py-2 px-4 rounded-lg hover:bg-red-200 dark:bg-red-900/50 dark:text-red-300 dark:hover:bg-red-900/80 transition-colors">
-                                                    Try Reprocessing
-                                                </button>
+                                        ) : batch.status === 'error' ? (
+                                             <div className="text-center p-8 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-500/30 rounded-lg">
+                                                <h3 className="text-xl font-semibold text-red-700 dark:text-red-300">An Error Occurred</h3>
+                                                <p className="text-red-600 dark:text-red-400 mt-2">{batch.error}</p>
+                                                <div className="mt-6 flex flex-col sm:flex-row justify-center items-center gap-4">
+                                                    <button
+                                                        onClick={() => handleReprocessBatch(batch.id)}
+                                                        className="bg-red-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50 transition-colors"
+                                                    >
+                                                        Try Again
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleDownload(batch)}
+                                                        className="bg-slate-500 text-white font-bold py-2 px-6 rounded-lg hover:bg-slate-600 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-opacity-50 transition-colors"
+                                                    >
+                                                        Download Audio
+                                                    </button>
+                                                </div>
                                             </div>
-                                        )}
+                                        ) : null}
                                      </div>
                                 )}
                              </div>
@@ -2263,5 +2274,3 @@ const BatchProcessor: React.FC<BatchProcessorProps> = ({ onBack, selectedModel, 
         </div>
     );
 };
-
-export { BatchProcessor };
